@@ -23,33 +23,14 @@
 #define LOW                 0
 #define HIGH                1
 
+#define DEBOUNCE_TIME       300
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Rodolphe Houdas");
 MODULE_DESCRIPTION("A simple driver for vintage phone keypads");
-MODULE_VERSION("0.2");
+MODULE_VERSION("1.0");
 
-static struct gpio gpio_rows[] = {
-    { GPIO_IN_0, GPIOF_IN, "row_0" },
-    { GPIO_IN_1, GPIOF_IN, "row_1" },
-    { GPIO_IN_2, GPIOF_IN, "row_2" }, 
-    { GPIO_IN_3, GPIOF_IN, "row_3" }, 
-    { GPIO_IN_4, GPIOF_IN, "row_4" }, 
-};
-
-static struct gpio gpio_col[] = {
-    { GPIO_OUT_0, GPIOF_OUT_INIT_HIGH, "col_0" },
-    { GPIO_OUT_1, GPIOF_OUT_INIT_HIGH, "col_1" },
-    { GPIO_OUT_2, GPIOF_OUT_INIT_HIGH, "col_2" }, 
-};
-
-static int irq_pin[5];
-
-unsigned int last_interrupt_time = 0;
-static uint64_t epochMilli;
-
-// Define a structure for the input device
-struct input_dev *input;
-
+// Define the mapping of the buttons
 static unsigned short keyboardKeymap[] = {
     KEY_1, KEY_2, KEY_3,
     KEY_4, KEY_5, KEY_6,
@@ -58,71 +39,110 @@ static unsigned short keyboardKeymap[] = {
     KEY_N, KEY_R, KEY_B
 };
 
-static unsigned int millis (void)
-{
-  struct timeval tv ;
-  uint64_t now ;
+// Define the GPIO for the rows
+static struct gpio gpio_rows[] = {
+    { GPIO_IN_0, GPIOF_IN, "row_0" },
+    { GPIO_IN_1, GPIOF_IN, "row_1" },
+    { GPIO_IN_2, GPIOF_IN, "row_2" }, 
+    { GPIO_IN_3, GPIOF_IN, "row_3" }, 
+    { GPIO_IN_4, GPIOF_IN, "row_4" }, 
+};
 
-  do_gettimeofday(&tv) ;
-  now  = (uint64_t)tv.tv_sec * (uint64_t)1000 + (uint64_t)(tv.tv_usec / 1000) ;
+// Define the GPIO for the columns
+static struct gpio gpio_col[] = {
+    { GPIO_OUT_0, GPIOF_OUT_INIT_HIGH, "col_0" },
+    { GPIO_OUT_1, GPIOF_OUT_INIT_HIGH, "col_1" },
+    { GPIO_OUT_2, GPIOF_OUT_INIT_HIGH, "col_2" }, 
+};
 
-  return (uint32_t)(now - epochMilli) ;
+// Store the irq numbers
+static int irq_pin[5];
+
+// Used for the debounce
+unsigned int last_interrupt_time = 0;
+static uint64_t epochMilli;
+
+// Define a structure for the input device
+struct input_dev *input;
+
+
+// millis() function
+// Return the time spent in milliseconds since epochMilli (uint32_t)
+static unsigned int millis (void) {
+    struct timeval tv ;
+    uint64_t now ;
+
+    do_gettimeofday(&tv) ;
+    now  = (uint64_t)tv.tv_sec * (uint64_t)1000 + (uint64_t)(tv.tv_usec / 1000) ;
+
+    return (uint32_t)(now - epochMilli) ;
 }
 
+
+// findIndex() function. Find the index of an integer in an array of integer.
+// Return an integer or -1 if the value has not been found.
+// arguments :
+//      - int a[]: array in where to search for the value
+//      - int size: size of the array
+//      - int value: value to search for
 int FindIndex(int a[], int size, int value ) {
     int index = 0;
+    
     while(index<size && a[index]!=value) index++;
+    
     return ( index == size ? -1 : index );
 }
 
+
+// irq callback when one of the button is pressed
 static irqreturn_t kpgpio_irq(int irq, void *dev_id) { 
-    
     unsigned long flags;
     unsigned int interrupt_time = millis();
-    
     struct gpio *dev = dev_id;
-    
     int col = 0;
-    int row;
+    int row = 0;
     int pin_value = 1;
     short key;
     
-    // disable hard interrupts (remember them in flag 'flags')
+    // Disable hard interrupts
     local_irq_save(flags);
-
-    if (interrupt_time - last_interrupt_time < 300) {
+    
+    // Debounce the button
+    if (interrupt_time - last_interrupt_time < DEBOUNCE_TIME) {
         local_irq_restore(flags);
         return IRQ_HANDLED;
     }
     last_interrupt_time = interrupt_time;
     
+    // Find which raw have been triggered
     row = FindIndex(irq_pin, NB_ROWS, irq);
-    printk(KERN_NOTICE "%i", row);
     
     for(col=0 ; col<NB_COLUMN ; col++) {
+        // Set the column off...
         gpio_set_value(gpio_col[col].gpio, LOW);
+        // ... measure the state of the GPIO that have been triggered ...
         pin_value = gpio_get_value(dev->gpio);
+        // ... and set the column off.
         gpio_set_value(gpio_col[col].gpio, HIGH);
         
+        // If the GPIO was low, we can deduce which button have been pressed
         if(pin_value == LOW) {
             key = keyboardKeymap[col + (row*NB_COLUMN)];
             input_report_key(input, key, 1);
             input_sync(input);
             input_report_key(input, key, 0);
             input_sync(input);
-            local_irq_restore(flags);
-            return IRQ_HANDLED;            
+            break;            
         }
     }
     
     // restore hard interrupts
     local_irq_restore(flags);
-    
     return IRQ_HANDLED;
 }
 
+// Initialization of the module
 static int __init tphonekp_init(void) {
-    
     int error;
     int i;
     struct timeval tv ;
@@ -135,13 +155,17 @@ static int __init tphonekp_init(void) {
     printk(KERN_NOTICE "toxphone: initializing GPIO");
     
     // Register GPIOs for columns
-    if(gpio_request_array(gpio_col, NB_COLUMN)) {
+    error = gpio_request_array(gpio_col, NB_COLUMN);
+    if(error) {
         printk(KERN_ALERT "toxphone: GPIO columns request array failed");
+        goto err_return;
     }
     
     // Register GPIOs for rows
-    if(gpio_request_array(gpio_rows, NB_ROWS)) {
+    error = gpio_request_array(gpio_rows, NB_ROWS);
+    if(error) {
         printk(KERN_ALERT "toxphone: GPIO rows request array failed");
+        goto err_free_columns;
     }
     
     // Initialize the interrupts
@@ -185,35 +209,37 @@ static int __init tphonekp_init(void) {
     
     return 0;
     
-    // Handling errors when initializing device or irqs
+    // Handling errors when initializing device, irqs or GPIOs
 err_free_dev:
     input_free_device(input);
 err_free_irq:
-    for(i = i ; i == 0 ; i = i-1) {
-        free_irq(irq_pin[i], &gpio_rows[i]);
-    }
+    for(i = i ; i == 0 ; i = i-1) { free_irq(irq_pin[i], &gpio_rows[i]); }
+err_free_columns:
+    gpio_free_array(gpio_col, NB_COLUMN);
+err_return:
     return error;
         
 }
 
+// Exit of the module
 static void __exit tphonekp_exit(void)
 {
     int i;
 
+    // Unregister and free the input device
     input_unregister_device(input);
     input_free_device(input);
     
     printk(KERN_NOTICE "toxphone: freeing GPIO");
 
-    for(i=0 ; i<NB_ROWS ; i++) {
-        free_irq(irq_pin[i], &gpio_rows[i]);
-    }
-    
+    // Free irqs and GPIOs
+    for(i=0 ; i<NB_ROWS ; i++) { free_irq(irq_pin[i], &gpio_rows[i]); }
     gpio_free_array(gpio_col, NB_COLUMN);
     gpio_free_array(gpio_rows, NB_ROWS);
 
     printk(KERN_NOTICE "toxphone: keypad driver exit");
 }
+
 
 module_init(tphonekp_init);
 module_exit(tphonekp_exit);
