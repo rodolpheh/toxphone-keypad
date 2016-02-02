@@ -25,6 +25,22 @@
 
 #define DEBOUNCE_TIME       300
 
+/**
+3.3V (NC) -  1 x x 2  - 5V (NC)
+             3 x x 4  - 5V (NC)
+             5 x x 6  - GND (NC)
+             7 x o 8  - row1
+ GND (NC) -  9 x o 10 - row2
+     col1 - 11 o o 12 - row3
+     col2 - 13 o x 14 - GND (NC)
+     col3 - 15 o o 16 - row4
+3.3V (NC) - 17 x o 18 - row5
+            19 x x 20 - GND (NC)
+            21 x x 22
+            23 x x 24
+ GND (NC) - 25 x x 26
+**/
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Rodolphe Houdas");
 MODULE_DESCRIPTION("A simple driver for vintage phone keypads");
@@ -114,7 +130,7 @@ static irqreturn_t kpgpio_irq(int irq, void *dev_id) {
     }
     last_interrupt_time = interrupt_time;
     
-    // Find which raw have been triggered
+    // Find which row have been triggered
     row = FindIndex(irq_pin, NB_ROWS, irq);
     
     for(col=0 ; col<NB_COLUMN ; col++) {
