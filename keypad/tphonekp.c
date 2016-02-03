@@ -48,10 +48,10 @@ MODULE_VERSION("1.0");
 
 // Define the mapping of the buttons
 static unsigned short keyboardKeymap[] = {
-    KEY_1, KEY_2, KEY_3,
-    KEY_4, KEY_5, KEY_6,
-    KEY_7, KEY_8, KEY_9,
-    KEY_A, KEY_0, KEY_D,
+    KEY_KP1, KEY_KP2, KEY_KP3,
+    KEY_KP4, KEY_KP5, KEY_KP6,
+    KEY_KP7, KEY_KP8, KEY_KP9,
+    KEY_A, KEY_KP0, KEY_D,
     KEY_N, KEY_R, KEY_B
 };
 
